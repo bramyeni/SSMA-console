@@ -1,4 +1,5 @@
 # Run SSMA Console
+<pre>
 Get-Help .\RunSSMA.ps1 -full
 
 NAME
@@ -109,5 +110,5 @@ OUTPUTS
 
     PS C:\>.\runSSMA.ps1 -Mode querydb -SQLQuery "select table_name from dba_tables where owner='THEOWNER'"
 
-
+</pre>
 
