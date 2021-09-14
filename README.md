@@ -112,3 +112,85 @@ OUTPUTS
 
 </pre>
 
+# Assessing multiple Oracle Databases
+See config.ini file section [sourcedb], [targetdb], [db1], [db2],....[dbn]
+
+<pre>
+
+#this is general parameters
+[general]
+object-overwrite=skip
+encrypted-password=true
+workingdirectory=c:\ssmaoutput
+xmloutput=c:\bram-ssma
+#fatal-error,error,warning,info,debug
+logverbosity=error
+#max db=3 this can be as many as you like
+maxdbs=3
+
+#this are parameters for assessment
+[assessment]
+reportmessage=false
+reportprogress=every-10%
+suppressmessage=false
+#ask-user,continue,error
+userinputpopup=continue
+upgradeproject=yes
+enableprogressreporting=true
+prereqstrictmode=false
+#fatal-error,error,warning,info,debug
+logverbosity=debug
+
+#the following parameters apply to all databases, unless specific [dbn] is available, so [dbn] will take precedence
+[alldb]
+reportfolder=Assessmentreport
+convertedsql=sqloutput
+sourcesql=sourcesql
+savescript=savescript
+#onpremwinauth,onpremsqlauth,azuresqldb,azuresqlmi,azuresynapse
+targetplatform=azuresynapse
+projectname=OracleToSynapse
+#sql-server-2012,sql-server-2014,sql-server-2016,sql-server-2017,sql-server-2019,sql-azure,sql-azure-mi,sql-azure-dw
+projecttype=sql-azure-dw
+projectoverwrite=true
+#report-total-as-warning,report-each-as-warning,fail-script
+synctargetonerror=report-each-as-warning
+refreshdbonerror=report-each-as-warning
+#all,single,category
+object=single
+#if object=catagory, then objecttype=Tables,Views,Procedures...(if objecttype not specified then default=Procedures)
+objecttype=Procedures
+#current_schema,SYS.object_#n
+#objtocollect=
+
+#ssma wlil ONLY perform datamigration and assessment on for db1 on object tables, 
+#the [alldb] config above will be overriden by any parameter that are available under [dbn]
+[db1]
+object=single
+datamigration=true
+objecttype=tables
+
+#this db will be skipped as the enabled is set to false
+[db2]
+enabled=false
+object=single
+objecttype=procedures
+
+#ssma will ONLY peform conversion and assessment for db3 on object views
+[db3]
+enabled=true
+object=single
+objecttype=views
+
+[sourcedb]
+db1=192.168.0.178,1519,TEST,system,manager,HR
+db2=10.1.66.233,1523,ORAPROD,READ_ONLY,readonly,BIPROD
+db3=10.1.66.253,1521,ORACOGNOS,READ_ONLY,readonly,BICOGNOS
+
+[targetdb]
+db1=azuredb1.database.windows.net,1433,DBDEV,dataloader,godkn0ws,BIXDEV
+db2=azuredb2.database.windows.net,1433,DBPROD,sqladmin,secret,BIXPROD
+db3=azuredb3.database.windows.net,1433,DBCOGNOS,sqladmin,password,cognos
+
+
+</pre>
