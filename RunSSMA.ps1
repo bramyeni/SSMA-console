@@ -1,9 +1,9 @@
 ﻿
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Originally Created by Bram pahlawanto on 14-OCT-2020
-# $Id: RunSSMA.ps1 52 2020-11-16 10:03:45Z bpahlawa $
-# $Date: 2020-11-16 18:03:45 +0800 (Mon, 16 Nov 2020) $
-# $Revision: 52 $
+# $Id: RunSSMA.ps1 55 2021-09-09 10:23:51Z bpahlawa $
+# $Date: 2021-09-09 18:23:51 +0800 (Thu, 09 Sep 2021) $
+# $Revision: 55 $
 # $Author: bpahlawa $
 # 
 
@@ -70,6 +70,12 @@ $global:config="config.ini"
 $global:objconfig="objectlist.ini"
 $global:storeobjects="allobjects"
 $global:SSMAconsole="C:\Program` Files\Microsoft` SQL` Server` Migration` Assistant` for` Oracle\bin\SSMAForOracleConsole.exe"
+$global:SSMADir=(split-path -path $global:SSMAconsole)
+$global:O2SSConsoleScriptSchema="$($global:SSMADir)\..\Schemas\O2SSConsoleScriptSchema.xsd"
+$global:O2SSConsoleScriptServersSchema="$($global:SSMADir)\..\Schemas\O2SSConsoleScriptServersSchema.xsd"
+$global:ConsoleScriptVariablesSchema="$($global:SSMADir)\..\Schemas\ConsoleScriptVariablesSchema.xsd"
+$global:instantclientdir="c:\instantclient"
+$global:OMDA="$($global:instantclientdir)\odp.net\managed\common\Oracle.ManagedDataAccess.dll"
 
 $global:VARSXML="Variables"
 $global:AssessXML="Assessment"
@@ -78,16 +84,63 @@ $global:ConversionXML="ConvertAndMigrate"
 $global:ConvertSQLXML="ConvertSQLCommand"
 $global:TargetDB=""
 $global:targetplatform=""
-Add-Type -Path "C:\instantclient\odp.net\managed\common\Oracle.ManagedDataAccess.dll"
+$global:xmloutput=""
+
 $global:objectlist=$null
 $global:tgtschema=$null
 $global:synctargetonerror=$null
 $global:refreshdbonerror=$null
 $global:csvfile="dboutput.csv"
 
+Function Check-FileAndDir
+{
+  param ([String]$filedir,
+         [Bool]$CreateIt=$False
+        )
+
+    if ((Test-path -path "$filedir") -eq $False) 
+    {  
+       if ($createit)
+       {
+          if (Test-path -path "$filedir" -PathType container)
+          {
+             write-host "Creating Directory $($filedir) ..."
+             try {
+                  New-item "$filedir" -itemtype "directory" -ErrorAction Stop
+             }
+             catch {
+                  Write-Output $PSItem.toString()
+                  exit 1
+             }
+
+          }
+          else
+          {
+             write-host "Creating File $($filedir) ..."
+             try {
+                  new-item "$filedir" -ItemType "file" -ErrorAction stop
+             }
+             catch {
+                  Write-Output $PSItem.toString()
+                  exit 1
+             }
+          }
+       }
+       else
+       {
+          write-host "File or directory $($filedir) doesnt exist.."; 
+          exit 1
+       } 
+    }
+
+
+
+}
+
 function Get-IniContent ($filePath)
 {
     $ini = @{}
+   
     switch -regex -file $FilePath
     {
         “^\[(.+)\]” # Section
@@ -129,7 +182,9 @@ $sqlconversionoutput = @"
                         project-name="`$project_name$"
                         project-type="`$project_type$"
                         overwrite-if-exists="`$project_overwrite$" />
-    <connect-source-database server="$OracleConnection" />
+    <connect-source-database server="$OracleConnection">
+    OBJECTTOCOLLECT
+    </connect-source-database>
 
     TARGETDB
 
@@ -145,6 +200,8 @@ $sqlconversionoutput = @"
 "@  
 
 $sqlconversionoutput = $sqlconversionoutput -replace "TARGETDB",$global:TargetDB
+
+$sqlconversionoutput = $sqlconversionoutput -replace "OBJECTTOCOLLECT",(Select-ObjectToCollect -NTHDB "db1")
 
 
 switch -exact ($ConvertMode)
@@ -208,11 +265,11 @@ switch -exact ($ConvertMode)
    }
 }
    $sqlconversionoutput=$sqlconversionoutput -replace "CONVERTSQL",$convertedsql
-   $xmloutput=$global:initcontent["general"]["xmloutput"]
-   $FileConvert = "$xmloutput\$global:ConvertSQLXML.xml"
+ 
+   $FileConvert = "$global:xmloutput\$global:ConvertSQLXML.xml"
 
    $sqlconversionoutput = "<?xml version=`"1.0`" encoding=`"utf-8`"?>
-<ssma-script-file xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" xsi:noNamespaceSchemaLocation=`"..\Schemas\O2SSConsoleScriptSchema.xsd`">
+<ssma-script-file xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" xsi:noNamespaceSchemaLocation=`"$($global:O2SSConsoleScriptSchema)`">
    $(create-config -section "conversion")
    $sqlconversionoutput
    " | out-file -FilePath $FileConvert -Encoding ascii -force
@@ -238,7 +295,9 @@ $conversionoutput = @"
                         project-name="`$project_name$"
                         project-type="`$project_type$"
                         overwrite-if-exists="`$project_overwrite$" />
-    <connect-source-database server="$OracleConnection" />
+    <connect-source-database server="$OracleConnection">
+    OBJECTTOCOLLECT
+    </connect-source-database>
 
     TARGETDB
 
@@ -266,18 +325,26 @@ $conversionoutput = @"
 
 $conversionoutput = $conversionoutput -replace "TARGETDB",$global:TargetDB
 
+$conversionoutput = $conversionoutput -replace "OBJECTTOCOLLECT",(Select-ObjectToCollect -NTHDB "$NTHDB")
+
 
 
    if ($global:initcontent.containskey("$NTHDB"))
    {
       $object=$global:initcontent["$NTHDB"]["object"]
+      if ($object -eq $null) {  $object=$global:initcontent["alldb"]["object"] }
       $objecttype=$global:initcontent["$NTHDB"]["objecttype"]
+      if ($objecttype -eq $null) { $objecttype=$global:initcontent["alldb"]["objecttype"] }
+
    }
    else
    {
       $object=$global:initcontent["alldb"]["object"]
       $objecttype=$global:initcontent["alldb"]["objecttype"]
+     
    }
+
+
    
    if ($object -eq "all" -or $object -eq 'single')
    {
@@ -371,14 +438,14 @@ $conversionoutput = $conversionoutput -replace "TARGETDB",$global:TargetDB
        }       
        $conversionoutput = $conversionoutput -replace "TYPEMAPPING",(Select-TypeMapping -Object "category" -ObjectType $objecttype -NTHDB $NTHDB)
    }
-   $xmloutput=$global:initcontent["general"]["xmloutput"]
-   $FileConvert = "$xmloutput\$global:ConversionXML$NTHDB.xml"
-   $fileconvert
+
+   $FileConvert = "$global:xmloutput\$global:ConversionXML$NTHDB.xml"
+
    $conversionoutput = "<?xml version=`"1.0`" encoding=`"utf-8`"?>
-<ssma-script-file xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" xsi:noNamespaceSchemaLocation=`"..\Schemas\O2SSConsoleScriptSchema.xsd`">
+   <ssma-script-file xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" xsi:noNamespaceSchemaLocation=`"$($global:O2SSConsoleScriptSchema)`">
    $(create-config -section "conversion")
    $conversionoutput
-   " | out-file -FilePath $FileConvert -Encoding ascii -force
+   " | out-file -FilePath $FileConvert -Encoding ascii -force -ErrorAction stop
 }
 
 
@@ -617,7 +684,7 @@ $azuresynapse = @"
 
 $header=@"
 <?xml version="1.0" encoding="utf-8"?>
-<servers xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="..\Schemas\O2SSConsoleScriptServersSchema.xsd">
+<servers xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="$($global:O2SSConsoleScriptServersSchema)">
 "@
 
 $oracleconn=@"
@@ -649,9 +716,7 @@ $oracleconn=@"
 "@
 
 
-
-$xmloutput=$global:initcontent["general"]["xmloutput"]
-$FileConn = "$xmloutput\$global:ConnXML$NTHDB.xml"
+$FileConn = "$global:xmloutput\$global:ConnXML$NTHDB.xml"
 
 
 $header | out-file -FilePath $FileConn -Encoding ascii -force
@@ -783,6 +848,7 @@ $configs = $configs -replace "#LOGVERBOSITY#", $global:initcontent[$section]["LO
 $configs = $configs -replace "#USERINPUTPOPUP#", $global:initcontent[$section]["USERINPUTPOPUP"]
 $configs = $configs -replace "#UPGRADEPROJECT#", $global:initcontent[$section]["UPGRADEPROJECT"]
 
+
 return $configs
 
 }
@@ -796,7 +862,7 @@ param (
 
 $VARHeader = @"
 <?xml version="1.0" encoding="utf-8"?>
-<variables xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="..\Schemas\ConsoleScriptVariablesSchema.xsd">
+<variables xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="$($global:ConsoleScriptVariablesSchema)">
   <variable name="`$WorkingFolder$" value="#WORKINGFOLDER#" />
 "@
 
@@ -846,12 +912,13 @@ $VARProjectSpec = @"
 
 
 
-$xmloutput=$global:initcontent["general"]["xmloutput"]
-$FileVar = "$xmloutput\$global:VARSXML$NTHDB.xml"
+
+$FileVar = "$global:xmloutput\$global:VARSXML$NTHDB.xml"
 
 out-file -FilePath $FileVar -Force -Encoding ascii
 
 $workingdirectory=$global:initcontent["general"]["workingdirectory"]
+Check-FileAndDir -Filedir "$workingdirectory" -CreateIt $true
 
 if (! (Test-Path $workingdirectory))
 {
@@ -924,6 +991,51 @@ $VARProjectSpec = $VARProjectSpec -replace "#PROJECTTYPE#",$projecttype
 $VARProjectSpec + "`n" + "</variables>" | Out-File -Append -FilePath $FileVar -Encoding ascii
 }
 
+Function Select-ObjectToCollect()
+{
+param (
+    [Parameter(Mandatory=$true)]
+    [String]$NTHDB
+)
+
+
+$allobjtocollect="<object-to-collect object-name=`"`$OracleSchemaName$`"/>"
+
+
+$objtocollectlist=get-inicontent("$global:config")
+
+      
+        if ($objtocollectlist -ne $null)
+        {
+        
+            if ($NTHDB -ne $null -and $objtocollectlist.Contains("$NTHDB") )
+            {
+                
+                $objs=$objtocollectlist["$NTHDB"]["objtocollect"]
+           
+            }
+            if ($objs -eq $null)
+            {
+                $objs=$objtocollectlist["alldb"]["objtocollect"]
+            }
+
+            if ($objs -eq $null)
+            {
+                return $allobjtocollect
+            }
+            $objects=$objs.split(",")
+        
+            $allobjtocollect=$allobjtocollect + "`n"
+
+            for ($j=0;$j -lt $objectlist.count;$j++)
+            {
+                    $allobjtocollect=$allobjtocollect + "<object-to-collect object-name=`"`$OracleSchemaName$.$($objectlist[$j] -replace "\`$","`$`$`$`$`$`$`$")`" />`n"
+            }
+      
+       } 
+
+  return $allobjtocollect
+}
 
 Function Select-DataMigration()
 {
@@ -968,6 +1080,12 @@ switch -exact ($object)
             if ($objs -eq $null)
             {
                 $objs=$global:objectlist["alldb"]["objecttype"]
+            }
+
+            if ($objs -eq $null)
+            {
+                write-host "Either [$($NTHDB)] or [alldb] within file $($global:objconfig) doesnt contain list of objects..."
+                exit 1
             }
         
             $objecttypes=$objs.split(",")
@@ -1050,6 +1168,11 @@ switch -exact ($object)
             $objs=$global:objectlist["alldb"]["objecttype"]
         }
         
+        if ($objs -eq $null)
+        {
+            write-host "Either [$($NTHDB)] or [alldb] within file $($global:objconfig) doesnt contain list of objects..."
+            exit 1
+        }
         $objecttypes=$objs.split(",")
         
 
@@ -1062,6 +1185,12 @@ switch -exact ($object)
             if ($lists -eq $null)
             {
                 $lists=$global:objectlist["alldb"][$objecttypes[$i]]
+            }
+
+            if ($lists -eq $null)
+            {
+                write-host "Either [$($NTHDB)] or [alldb] within file $($global:objconfig) doesnt contain list of objects..."
+                exit 1
             }
           
            $objectlist=$lists.split(",")
@@ -1084,11 +1213,20 @@ switch -exact ($object)
 
     $objectcat=$objecttype.split(',')
 
-   for ($i=0;$i -lt $objectcat.count;$i++)
-   {
-       $categoryobjecttgt=$categoryobjecttgt + "<metabase-object object-name=`"`$OracleSchemaName$.$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
-       $categoryobjectsrc=$categoryobjectsrc + "<metabase-object object-name=`"[`$DatabaseName$].$($global:tgtschema).$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
-   }
+      if ($objecttype -eq "")
+      {
+          $categoryobjecttgt=$categoryobjecttgt + "<metabase-object object-name=`"`$OracleSchemaName$.Tables`" object-type=`"category`"  />`n"
+          $categoryobjectsrc=$categoryobjectsrc + "<metabase-object object-name=`"[`$DatabaseName$].$($global:tgtschema).Tables`" object-type=`"category`"  />`n"
+      }
+      else
+      {
+
+           for ($i=0;$i -lt $objectcat.count;$i++)
+           {
+               $categoryobjecttgt=$categoryobjecttgt + "<metabase-object object-name=`"`$OracleSchemaName$.$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
+               $categoryobjectsrc=$categoryobjectsrc + "<metabase-object object-name=`"[`$DatabaseName$].$($global:tgtschema).$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
+           }
+      }
 
    $categoryobjecttgt=$categoryobjecttgt+"</save-as-script>"
    $categoryobjectsrc=$categoryobjectsrc+"</save-as-script>`n"
@@ -1098,6 +1236,7 @@ switch -exact ($object)
 }
   return $null
 }   
+
 
 
 Function Select-ConvertSchema()
@@ -1153,6 +1292,11 @@ switch -exact ($object)
             $objs=$global:objectlist["alldb"]["objecttype"]
         }
         
+        if ($objs -eq $null)
+        {
+            write-host "Either [$($NTHDB)] or [alldb] within file $($global:objconfig) doesnt contain list of objects..."
+            exit 1
+        }
         $objecttypes=$objs.split(",")
         
 
@@ -1165,6 +1309,12 @@ switch -exact ($object)
             if ($lists -eq $null)
             {
                 $lists=$global:objectlist["alldb"][$objecttypes[$i]]
+            }
+
+            if ($lists -eq $null)
+            {
+                write-host "Either [$($NTHDB)] or [alldb] within file $($global:objconfig) doesnt contain list of objects..."
+                exit 1
             }
            
            $objectlist=$lists.split(",")
@@ -1190,14 +1340,19 @@ switch -exact ($object)
 
     $objectcat=$objecttype.split(',')
 
-
+    if ($objecttype -eq "")
+    {
+        $categoryobject=$categoryobject + "<metabase-object object-name=`"`$OracleSchemaName$.Tables`" object-type=`"category`"  />`n"
+    }
+    else
+    {
    
-   for ($i=0;$i -lt $objectcat.count;$i++)
-   {
-       $categoryobject=$categoryobject + "<metabase-object object-name=`"`$OracleSchemaName$.$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
-   }
+       for ($i=0;$i -lt $objectcat.count;$i++)
+       {
+           $categoryobject=$categoryobject + "<metabase-object object-name=`"`$OracleSchemaName$.$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
+       }
 
-   
+    }
    return $categoryobject + "`n</convert-schema>"
    }
 }
@@ -1259,6 +1414,11 @@ switch -exact ($object)
             $objs=$global:objectlist["alldb"]["objecttype"]
         }
         
+        if ($objs -eq $null)
+        {
+            write-host "Either [$($NTHDB)] or [alldb] within file $($global:objconfig) doesnt contain list of objects..."
+            exit 1
+        }
         $objecttypes=$objs.split(",")
         
 
@@ -1271,6 +1431,12 @@ switch -exact ($object)
             if ($lists -eq $null)
             {
                 $lists=$global:objectlist["alldb"][$objecttypes[$i]]
+            }
+
+            if ($lists -eq $null)
+            {
+                write-host "Either [$($NTHDB)] or [alldb] within file $($global:objconfig) doesnt contain list of objects..."
+                exit 1
             }
           
            $objectlist=$lists.split(",")
@@ -1288,13 +1454,17 @@ switch -exact ($object)
     $categoryobject="<synchronize-target report-errors-to=`"`$SynchronizationReports$`" on-error=`"$synctargetonerror`">`n"
     $objectcat=$objecttype.split(',')
 
-
-   
-   for ($i=0;$i -lt $objectcat.count;$i++)
-   {
-       $categoryobject=$categoryobject + "<metabase-object object-name=`"[`$DatabaseName$].$($global:tgtschema).$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
-   }
-
+    if ($objecttype -eq "")
+    {
+       $categoryobject=$categoryobject + "<metabase-object object-name=`"[`$DatabaseName$].$($global:tgtschema).Tables`" object-type=`"category`"  />`n"
+    }
+    else
+    {
+       for ($i=0;$i -lt $objectcat.count;$i++)
+       {
+           $categoryobject=$categoryobject + "<metabase-object object-name=`"[`$DatabaseName$].$($global:tgtschema).$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
+       }
+    }
    
    return $categoryobject + "`n</synchronize-target>"
    }
@@ -1354,6 +1524,11 @@ switch -exact ($object)
             $objs=$global:objectlist["alldb"]["objecttype"]
         }
         
+        if ($objs -eq $null)
+        {
+            write-host "Either [$($NTHDB)] or [alldb] within file $($global:objconfig) doesnt contain list of objects..."
+            exit 1
+        }
         $objecttypes=$objs.split(",")
         
 
@@ -1368,6 +1543,11 @@ switch -exact ($object)
                 $lists=$global:objectlist["alldb"][$objecttypes[$i]]
             }
           
+            if ($lists -eq $null)
+            {
+                write-host "Either [$($NTHDB)] or [alldb] within file $($global:objconfig) doesnt contain list of objects..."
+                exit 1
+            }
            $objectlist=$lists.split(",")
            for ($j=0;$j -lt $objectlist.count;$j++)
            {
@@ -1385,13 +1565,18 @@ switch -exact ($object)
     
     $objectcat=$objecttype.split(',')
 
-
+    if ($objecttype -eq "")
+    {
+       $categoryobject=$categoryobject + "<metabase-object object-name=`"`$OracleSchemaName$.Tables`" object-type=`"category`"  />`n"
+    }
+    else
+    {
    
-   for ($i=0;$i -lt $objectcat.count;$i++)
-   {
-       $categoryobject=$categoryobject + "<metabase-object object-name=`"`$OracleSchemaName$.$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
-   }
-
+       for ($i=0;$i -lt $objectcat.count;$i++)
+       {
+           $categoryobject=$categoryobject + "<metabase-object object-name=`"`$OracleSchemaName$.$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
+       }
+    }
    
    return $categoryobject + "`n</refresh-from-database>"
    }
@@ -1425,6 +1610,7 @@ switch -exact ($object)
                                 report-errors="true"
                                 assessment-report-folder="`$AssessmentReports$"
                                 assessment-report-overwrite="true" />
+
 "@
     return $allobject
    } 
@@ -1439,9 +1625,10 @@ switch -exact ($object)
                                 assessment-report-overwrite="true">`n
 "@
      
-
+     Check-FileAndDir "$global:objconfig"
 
      $global:objectlist=get-inicontent("$global:objconfig")
+     
 
      if ($global:objectlist -ne $null)
      {
@@ -1453,7 +1640,13 @@ switch -exact ($object)
         {
             $objs=$global:objectlist["alldb"]["objecttype"]
         }
-        
+        if ($objs -eq $null)
+        {
+            write-host "Either [$($NTHDB)] or [alldb] within file $($global:objconfig) doesnt contain list of objects..."
+            exit 1
+        }
+
+
         $objecttypes=$objs.split(",")
         
 
@@ -1484,18 +1677,23 @@ switch -exact ($object)
    }
    'category'
    {
-    $categoryobject="<generate-assessment-report write-summary-report-to=`"`$SummaryReports$`" report-errors=`"true`">`n"
-    $objectcat=$objecttype.split(',')
+      $categoryobject="<generate-assessment-report write-summary-report-to=`"`$SummaryReports$`" report-errors=`"true`">`n"
 
-    
-   
-   for ($i=0;$i -lt $objectcat.count;$i++)
-   {
-       $categoryobject=$categoryobject + "<metabase-object object-name=`"`$OracleSchemaName$.$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
-   }
+      $objectcat=$objecttype.split(',')
+      if ($objecttype -eq "")
+      {
+         $categoryobject = $categoryobject + "<metabase-object object-name=`"`$OracleSchemaName$.Tables`" object-type=`"category`"  />`n"
+      }
+      else
+      {
+     
+        for ($i=0;$i -lt $objectcat.count;$i++)
+        {
+              $categoryobject=$categoryobject + "<metabase-object object-name=`"`$OracleSchemaName$.$($TextInfo.ToTitleCase($objectcat[$i]))`" object-type=`"category`"  />`n"
+        }
 
-   $category
-   return $categoryobject + "`n</generate-assessment-report>"
+      }
+      return $categoryobject + "`n</generate-assessment-report>"
    }
 }
   return $null
@@ -1514,7 +1712,9 @@ $assessmentreport = @"
                         project-name="`$project_name$"
                         project-type="`$project_type$"
                         overwrite-if-exists="`$project_overwrite$" />
-    <connect-source-database server="$OracleConnection" />
+    <connect-source-database server="$OracleConnection">
+     OBJECTTOCOLLECT
+    </connect-source-database>
      OBJECTSELECTIONS 
     <!-- Save project -->
     <save-project />
@@ -1530,12 +1730,16 @@ $assessmentreport = @"
    if ($global:initcontent.containskey("$NTHDB"))
    {
       $object=$global:initcontent["$NTHDB"]["object"]
+      if ($object -eq $null) {  $object=$global:initcontent["alldb"]["object"] }
       $objecttype=$global:initcontent["$NTHDB"]["objecttype"]
+      if ($objecttype -eq $null) { $objecttype=$global:initcontent["alldb"]["objecttype"] }
+      $assessmentreport = $assessmentreport -replace "OBJECTTOCOLLECT",(Select-ObjectToCollect -NTHDB "$NTHDB")
    }
    else
    {
       $object=$global:initcontent["alldb"]["object"]
       $objecttype=$global:initcontent["alldb"]["objecttype"]
+      $assessmentreport = $assessmentreport -replace "OBJECTTOCOLLECT",(Select-ObjectToCollect -NTHDB "db1")
    }
 
 
@@ -1544,17 +1748,19 @@ $assessmentreport = @"
    if ($object -eq "all" -or $object -eq 'single')
    {
        $assessmentreport = $assessmentreport -replace "OBJECTSELECTIONS",(Select-AssessmentObject -Object $object -NTHDB $NTHDB)
-
    }
    else
    {
-       
+
        $assessmentreport = $assessmentreport -replace "OBJECTSELECTIONS",(Select-AssessmentObject -Object "category" -ObjectType $objecttype -NTHDB $NTHDB)
+
    }
-   $xmloutput=$global:initcontent["general"]["xmloutput"]
-   $FileAssess = "$xmloutput\$global:ASSESSXML$NTHDB.xml"
+
+
+
+   $FileAssess = "$global:xmloutput\$global:ASSESSXML$NTHDB.xml"
    $assessmentreport = "<?xml version=`"1.0`" encoding=`"utf-8`"?>
-<ssma-script-file xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" xsi:noNamespaceSchemaLocation=`"..\Schemas\O2SSConsoleScriptSchema.xsd`">
+<ssma-script-file xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" xsi:noNamespaceSchemaLocation=`"$($global:O2SSConsoleScriptSchema)`">
    $(create-config -section "assessment")
    $assessmentreport
    " | out-file -FilePath $FileAssess -Encoding ascii -force
@@ -1571,9 +1777,8 @@ param (
 
 
 
-$xmloutput=$global:initcontent["general"]["xmloutput"]
 
-$FileObjs = "$xmloutput\$global:storeobjects$NTHDB.lst" 
+$FileObjs = "$global:xmloutput\$global:storeobjects$NTHDB.lst" 
 
 
 $result=$global:initcontent["sourcedb"]["$NTHDB"]
@@ -1653,9 +1858,9 @@ param (
 )
 
 
-$xmloutput=$global:initcontent["general"]["xmloutput"]
 
-$FileObjs = "$xmloutput\$global:storeobjects" 
+
+$FileObjs = "$global:xmloutput\$global:storeobjects" 
 
 $result=$global:initcontent["sourcedb"]["$NTHDB"]
 
@@ -1810,9 +2015,8 @@ param (
 )
 
 
-$xmloutput=$global:initcontent["general"]["xmloutput"]
 
-$FileObjs = "$xmloutput\$global:csvfile" 
+$FileObjs = "$global:xmloutput\$global:csvfile" 
 
 $result=$global:initcontent["sourcedb"]["$NTHDB"]
 
@@ -1913,12 +2117,27 @@ finally
 $maxdbs=$global:initcontent["general"]["maxdbs"]
 
 
+
+Check-FileAndDir "$global:SSMAconsole"
+Check-FileAndDir "$global:O2SSConsoleScriptSchema"
+Check-FileAndDir "$global:O2SSConsoleScriptServersSchema"
+Check-FileAndDir "$global:ConsoleScriptVariablesSchema"
+Check-FileAndDir "$global:instantclientdir"
+Add-Type -Path "$($global:instantclientdir)\odp.net\managed\common\Oracle.ManagedDataAccess.dll"
+Check-FileAndDir($global:OMDA)
+
+
+
+$global:xmloutput=$global:initcontent["general"]["xmloutput"]
+Check-FileAndDir -filedir $global:xmloutput -CreateIt $true
+
 for ($db=1;$db -le $maxdbs;$db++)
 {
 
     if (! ($global:initcontent.sourcedb.contains("db$($db)")))
     {
-       write-host "Database db$($db) config is disabled.. please check the config file!!"
+       write-host "Database db$($db) config is disabled or config section from [db$($db)] to [db$($maxdbs)] are not defined!!.."
+       write-host "You have set Max DB to be $($maxdbs), please check the config file!!"
        exit
     }
 
@@ -1931,20 +2150,27 @@ for ($db=1;$db -le $maxdbs;$db++)
       if ($global:initcontent["db$($db)"]["synctarget"] -eq $false) {$synctarget=$false} else {$synctarget=$true}
       if ($global:initcontent["db$($db)"]["convertschema"] -eq $false) {$convertschema=$false} else {$convertschema=$true}
     }
-    
+    else
+    {
+      write-host "Sourcedb db$($db) is defined but the config [db$($db)] does not exist on the config file.."
+      exit 1
+    }
+
+
     $global:targetplatform=Get-DBConfigParam -NTHDB "db$($db)" -Key "targetplatform"
     Create-Conn "$global:targetplatform" -NTHDB "db$($db)"
     Create-var -NTHDB "db$($db)"
 
     if (! [string]::IsNullOrWhiteSpace($SQLQuery) -and $Mode -eq "querydb" )
     {
-
+        write-output "Querying database db$($db) ..."
         Query-Database -SQLQuery $SQLQuery -NTHDB "db$($db)" -SpoolFile $SpoolFile
        
     }
     elseif ($Mode -eq "lookupdb")
     {
 
+        write-output "Checking database db$($db) ..."
         $global:objectlist=get-inicontent("$global:objconfig")
 
         Check-Database -NTHDB "db$($db)"
@@ -1961,29 +2187,35 @@ for ($db=1;$db -le $maxdbs;$db++)
 
 
     }
-    elseif ($Mode -eq "assess" -or $Mode -eq "convert")
+    elseif ($Mode -eq "assess" -or $Mode -eq "convert" -or $Mode -eq "all")
     {
 
-
+        write-output "Creating assessment Report for database db$($db) ..."
         Create-AssessmentReport "db$($db)"
+
+        write-output "Performing conversion on database db$($db) ..."
         Create-Conversion "db$($db)" -RefreshDatabase $refreshdatabase -SyncTarget $synctarget -ConvertSchema $Convertschema -SaveScript $savescript -DataMigration $datamigration
 
         
     
         if ($Mode -eq "assess" -or $Mode -eq "all")
         {
+
+            write-output "Asessing database db$($db) ..."
             if (test-path -path "$global:scriptdir\assessmentoutdb$($db).log") { remove-item -path "$global:scriptdir\assessmentoutdb$($db).log" -force }
             if (test-path -path "$global:scriptdir\assessmenterrdb$($db).log") { remove-item -path "$global:scriptdir\assessmenterrdb$($db).log" -force }
 
-            start-process -FilePath $global:SSMAconsole -ArgumentList "-s $global:scriptdir\$($global:AssessXML)db$($db).xml -c $global:scriptdir\$($global:ConnXML)db$($db).xml -v $global:scriptdir\$($global:VARSXML)db$($db).xml" -RedirectStandardError "$global:scriptdir\assessmenterrdb$($db).log" -RedirectStandardOutput "$global:scriptdir\assessmentoutdb$($db).log" -wait
+            start-process -FilePath $global:SSMAconsole -ArgumentList "-s $global:xmloutput\$($global:AssessXML)db$($db).xml -c $global:xmloutput\$($global:ConnXML)db$($db).xml -v $global:xmloutput\$($global:VARSXML)db$($db).xml" -RedirectStandardError "$global:scriptdir\assessmenterrdb$($db).log" -RedirectStandardOutput "$global:scriptdir\assessmentoutdb$($db).log" -wait -ErrorAction stop
         }
 
         if ($Mode -eq "convert" -or $Mode -eq "all")
         {
+
+            write-output "Converting database db$($db) ..."
             if (test-path -path "$global:scriptdir\convertoutdb$($db).log") { remove-item -path "$global:scriptdir\convertoutdb$($db).log" -force }
             if (test-path -path "$global:scriptdir\converterrdb$($db).log") { remove-item -path "$global:scriptdir\converterrdb$($db).log" -force }
 
-            start-process -FilePath $global:SSMAconsole -ArgumentList "-s $global:scriptdir\$($global:ConversionXML)db$($db).xml -c $global:scriptdir\$($global:ConnXML)db$($db).xml -v $global:scriptdir\$($global:VARSXML)db$($db).xml" -RedirectStandardError "$global:scriptdir\converterrdb$($db).log" -RedirectStandardOutput "$global:scriptdir\convertoutdb$($db).log" -wait
+            start-process -FilePath $global:SSMAconsole -ArgumentList "-s $global:xmloutput\$($global:ConversionXML)db$($db).xml -c $global:xmloutput\$($global:ConnXML)db$($db).xml -v $global:xmloutput\$($global:VARSXML)db$($db).xml" -RedirectStandardError "$global:scriptdir\converterrdb$($db).log" -RedirectStandardOutput "$global:scriptdir\convertoutdb$($db).log" -wait -ErrorAction stop
         }
     }
     else
