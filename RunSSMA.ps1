@@ -1,9 +1,9 @@
 ﻿
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Originally Created by Bram pahlawanto on 14-OCT-2020
-# $Id: RunSSMA.ps1 55 2021-09-09 10:23:51Z bpahlawa $
-# $Date: 2021-09-09 18:23:51 +0800 (Thu, 09 Sep 2021) $
-# $Revision: 55 $
+# $Id: RunSSMA.ps1 56 2021-09-16 16:42:51Z bpahlawa $
+# $Date: 2021-09-17 00:42:51 +0800 (Fri, 17 Sep 2021) $
+# $Revision: 56 $
 # $Author: bpahlawa $
 # 
 
@@ -2115,7 +2115,7 @@ finally
 #Main
 
 $maxdbs=$global:initcontent["general"]["maxdbs"]
-
+$threads=$global:initcontent["general"]["threads"]
 
 
 Check-FileAndDir "$global:SSMAconsole"
@@ -2126,6 +2126,10 @@ Check-FileAndDir "$global:instantclientdir"
 Add-Type -Path "$($global:instantclientdir)\odp.net\managed\common\Oracle.ManagedDataAccess.dll"
 Check-FileAndDir($global:OMDA)
 
+$global:RunspacePool = [runspacefactory]::CreateRunspacePool(1, $threads)
+$global:RunspacePool.Open()
+$global:Jobs = @()
+
 
 
 $global:xmloutput=$global:initcontent["general"]["xmloutput"]
@@ -2133,6 +2137,8 @@ Check-FileAndDir -filedir $global:xmloutput -CreateIt $true
 
 for ($db=1;$db -le $maxdbs;$db++)
 {
+    $PowerShell = [powershell]::Create()
+    $PowerShell.RunspacePool = $global:RunspacePool
 
     if (! ($global:initcontent.sourcedb.contains("db$($db)")))
     {
@@ -2183,7 +2189,7 @@ for ($db=1;$db -le $maxdbs;$db++)
     {
 
         Create-SQL-Conversion -ConvertMode $ConvertMode -SQlQuery $SQLQuery
-        start-process -FilePath $global:SSMAconsole -ArgumentList "-s $global:scriptdir\$($global:ConvertSQLXML).xml -c $global:scriptdir\$($global:ConnXML)db$($db).xml  -v $global:scriptdir\$($global:VARSXML)db$($db).xml" -RedirectStandardError "$global:scriptdir\convertsqlerrdb$($db).log" -RedirectStandardOutput "$global:scriptdir\convertsqloutdb$($db).log" -wait 
+        $PowerShell.AddScript("start-process -FilePath `"$($global:SSMAconsole) -ArgumentList `"-s $($global:scriptdir)\$($global:ConvertSQLXML).xml -c $($global:scriptdir)\$($global:ConnXML)db$($db).xml  -v $($global:scriptdir)\$($global:VARSXML)db$($db).xml`" -RedirectStandardError `"$($global:scriptdir)\convertsqlerrdb$($db).log`" -RedirectStandardOutput `"$($global:scriptdir)\convertsqloutdb$($db).log`" -wait")
 
 
     }
@@ -2205,7 +2211,8 @@ for ($db=1;$db -le $maxdbs;$db++)
             if (test-path -path "$global:scriptdir\assessmentoutdb$($db).log") { remove-item -path "$global:scriptdir\assessmentoutdb$($db).log" -force }
             if (test-path -path "$global:scriptdir\assessmenterrdb$($db).log") { remove-item -path "$global:scriptdir\assessmenterrdb$($db).log" -force }
 
-            start-process -FilePath $global:SSMAconsole -ArgumentList "-s $global:xmloutput\$($global:AssessXML)db$($db).xml -c $global:xmloutput\$($global:ConnXML)db$($db).xml -v $global:xmloutput\$($global:VARSXML)db$($db).xml" -RedirectStandardError "$global:scriptdir\assessmenterrdb$($db).log" -RedirectStandardOutput "$global:scriptdir\assessmentoutdb$($db).log" -wait -ErrorAction stop
+            #start-process -FilePath $global:SSMAconsole -ArgumentList "-s $global:xmloutput\$($global:AssessXML)db$($db).xml -c $global:xmloutput\$($global:ConnXML)db$($db).xml -v $global:xmloutput\$($global:VARSXML)db$($db).xml" -RedirectStandardError "$global:scriptdir\assessmenterrdb$($db).log" -RedirectStandardOutput "$global:scriptdir\assessmentoutdb$($db).log" -wait -ErrorAction stop
+            $PowerShell.AddScript("start-process -FilePath `"$($global:SSMAconsole)`" -ArgumentList `"-s $($global:xmloutput)\$($global:AssessXML)db$($db).xml -c $($global:xmloutput)\$($global:ConnXML)db$($db).xml -v $($global:xmloutput)\$($global:VARSXML)db$($db).xml`" -RedirectStandardError `"$($global:scriptdir)\assessmenterrdb$($db).log`" -RedirectStandardOutput `"$($global:scriptdir)\assessmentoutdb$($db).log`" -wait -ErrorAction stop")
         }
 
         if ($Mode -eq "convert" -or $Mode -eq "all")
@@ -2215,7 +2222,8 @@ for ($db=1;$db -le $maxdbs;$db++)
             if (test-path -path "$global:scriptdir\convertoutdb$($db).log") { remove-item -path "$global:scriptdir\convertoutdb$($db).log" -force }
             if (test-path -path "$global:scriptdir\converterrdb$($db).log") { remove-item -path "$global:scriptdir\converterrdb$($db).log" -force }
 
-            start-process -FilePath $global:SSMAconsole -ArgumentList "-s $global:xmloutput\$($global:ConversionXML)db$($db).xml -c $global:xmloutput\$($global:ConnXML)db$($db).xml -v $global:xmloutput\$($global:VARSXML)db$($db).xml" -RedirectStandardError "$global:scriptdir\converterrdb$($db).log" -RedirectStandardOutput "$global:scriptdir\convertoutdb$($db).log" -wait -ErrorAction stop
+            #start-process -FilePath $global:SSMAconsole -ArgumentList "-s $global:xmloutput\$($global:ConversionXML)db$($db).xml -c $global:xmloutput\$($global:ConnXML)db$($db).xml -v $global:xmloutput\$($global:VARSXML)db$($db).xml" -RedirectStandardError "$global:scriptdir\converterrdb$($db).log" -RedirectStandardOutput "$global:scriptdir\convertoutdb$($db).log" -wait -ErrorAction stop
+            $PowerShell.AddScript("start-process -FilePath `"$($global:SSMAconsole)`" -ArgumentList `"-s $($global:xmloutput)\$($global:ConversionXML)db$($db).xml -c $($global:xmloutput)\$($global:ConnXML)db$($db).xml -v $($global:xmloutput)\$($global:VARSXML)db$($db).xml`" -RedirectStandardError `"$($global:scriptdir)\converterrdb$($db).log`" -RedirectStandardOutput `"$($global:scriptdir)\convertoutdb$($db).log`" -wait -ErrorAction stop")
         }
     }
     else
@@ -2223,7 +2231,12 @@ for ($db=1;$db -le $maxdbs;$db++)
         write-host "Wrong Mode!!"
     }
 
+        
+    $global:Jobs += $PowerShell.BeginInvoke()
+
 }
+
+while ($global:Jobs.IsCompleted -contains $false) {Start-Sleep -Milliseconds 100}
 
 
 
