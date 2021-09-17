@@ -1,4 +1,4 @@
-# Run SSMA Console
+# Run SSMA Console (with Multithread using runspacepool)
 <pre>
 Get-Help .\RunSSMA.ps1 -full
 
@@ -127,6 +127,7 @@ xmloutput=c:\bram-ssma
 logverbosity=error
 #max db=3 this can be as many as you like
 maxdbs=3
+threads=10
 
 #this are parameters for assessment
 [assessment]
